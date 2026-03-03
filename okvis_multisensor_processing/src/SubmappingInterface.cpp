@@ -1149,7 +1149,7 @@ namespace okvis {
       depthMeasurements_.getCopyOfFront(&depthMeasurement);
 
       // Motion de-skewed LiDAR Measurements
-      std::vector<okvis::State> states;
+      std::vector<Eigen::Matrix4d, Eigen::aligned_allocator<Eigen::Matrix4d>> statePoses;
       std::vector<okvis::Time> times;
       std::vector<okvis::LidarMeasurement, Eigen::aligned_allocator<okvis::LidarMeasurement>> measurements;
 
@@ -1253,12 +1253,13 @@ namespace okvis {
         if(!keepLoopingDepth && !keepLoopingLidar ) {
           keepLooping = false;
           if(integrateLidar){
-            states.reserve(times.size());
+            statePoses.reserve(times.size());
             // ToDo: Potentially thread-un-safe?!?!
-            bool getStatesSuccessfully = propagatedStates.getStates(times, states);
+            bool getStatesSuccessfully = propagatedStates.getStatePoses(times, statePoses);
             if(getStatesSuccessfully){
+              frame_->vecRayMeasurements.reserve(times.size());
               for(size_t i = 0; i < times.size(); i++){
-                Eigen::Matrix4f T_WL = states[i].T_WS.T().cast<float>() * (*viParameters_.lidar).T_SL.T().cast<float>();
+                Eigen::Matrix4f T_WL = statePoses[i].cast<float>() * (*viParameters_.lidar).T_SL.T().cast<float>();
                 if(!frame_){
                   throw std::runtime_error("About to add lidar measurements and we have found a point where there is no frame initialized where there should have be");
                 }else{
@@ -1464,6 +1465,7 @@ namespace okvis {
     }
 
     okvis::kinematics::Transformation T_WM(seSubmapLookup_[mapId].T_WK.matrix().cast<double>());
+    Eigen::Isometry3f T_MW_iso(T_WM.inverse().T().cast<float>());
 
     for(size_t i = 0; i < number_of_measurements; i++) {
         if((seFrame.vecRayMeasurements[i].second.norm() > lidarSensors_->second.far_plane) || (seFrame.vecRayMeasurements[i].second.norm() < lidarSensors_->second.near_plane)){
@@ -1471,7 +1473,7 @@ namespace okvis {
             continue;
         }
         // Transform se frame measurement into submap: T_WM.inverse() * T_WD * ray == world_to_submap*depth_to_submap * measurement_in_depth_sensor_frame
-        Eigen::Vector3f pt = T_WM.inverse().T3x4().cast<float>() * seFrame.vecRayMeasurements[i].first * seFrame.vecRayMeasurements[i].second.homogeneous();
+        Eigen::Vector3f pt = T_MW_iso * seFrame.vecRayMeasurements[i].first * seFrame.vecRayMeasurements[i].second;
         std::optional<float> occ = map.interpField<se::Safe::On>(pt);
         if (occ){
             observed_counter++;
@@ -1565,14 +1567,15 @@ namespace okvis {
     size_t number_of_measurements = points.size();
     okvis::kinematics::Transformation T_WM_A(seSubmapLookup_[mapIdA].T_WK.matrix().cast<double>());
     okvis::kinematics::Transformation T_WM_B(seSubmapLookup_[mapIdB].T_WK.matrix().cast<double>());
+    Eigen::Isometry3f T_MA_MB((T_WM_A.inverse().T() * T_WM_B.T()).cast<float>());
 
     for(size_t i = 0; i < number_of_measurements; i++) {
 
       // Transform from submap B to submap A
-      Eigen::Vector3f pt_A = T_WM_A.inverse().T3x4().cast<float>() * T_WM_B.T().cast<float>() * points.at(i).homogeneous();
+      Eigen::Vector3f pt_A = T_MA_MB * points[i];
       std::optional<float> occ = seSubmapLookup_[mapIdA].map->interpField<se::Safe::On>(pt_A);
       if (occ){
-        observedPoints.push_back(points.at(i));
+        observedPoints.push_back(points[i]);
         observed_counter++;
       }
     }
@@ -1589,17 +1592,18 @@ namespace okvis {
     const float occ_margin = 0.8*dataConfig_.field.log_odd_max;
     okvis::kinematics::Transformation T_WM_A(seSubmapLookup_[mapIdA].T_WK.matrix().cast<double>());
     okvis::kinematics::Transformation T_WM_B(seSubmapLookup_[mapIdB].T_WK.matrix().cast<double>());
+    Eigen::Isometry3f T_MA_MB((T_WM_A.inverse().T() * T_WM_B.T()).cast<float>());
 
     for(size_t i = 0; i < number_of_measurements; i++) {
 
       // Transform from submap B to submap A
-      Eigen::Vector3f pt_A = T_WM_A.inverse().T3x4().cast<float>() * T_WM_B.T().cast<float>() * points.at(i).homogeneous();
+      Eigen::Vector3f pt_A = T_MA_MB * points[i];
       std::optional<float> occ = okvis::interpFieldMeanOccup<se::Safe::On>(*(seSubmapLookup_[mapIdA].map), pt_A);
       std::optional<Eigen::Vector3f> gradf = okvis::gradFieldMeanOccup<se::Safe::On>(*(seSubmapLookup_[mapIdA].map), pt_A);
       if (occ && gradf){
         if (occ.value() > -occ_margin && occ.value() < occ_margin && gradf.value().norm() >= 1e-03) {
-          observedPoints.push_back(points.at(i));
-          observedSigma.push_back(sigma.at(i));
+          observedPoints.push_back(points[i]);
+          observedSigma.push_back(sigma[i]);
           observed_counter++;
         }
       }

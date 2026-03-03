@@ -232,7 +232,7 @@ bool ThreadedSlam::addImages(const okvis::Time & stamp,
   else
   {
     if(cameraMeasurementsReceived_.PushNonBlockingDroppingIfFull(frames, cameraInputQueueSize)) {
-      LOG(WARNING) << "frame drop ";
+      DLOG(WARNING) << "frame drop ";
       return false;
     }
     return true;
@@ -303,7 +303,7 @@ bool ThreadedSlam::addLidarMeasurement(const okvis::Time &stamp,
       drop = lidarMeasurementsReceived_.PushNonBlockingDroppingIfFull(
               lidarMeasurement, size_t(lidarQueueSize));
       if(drop)
-        LOG(WARNING) << "lidar measurement drop ";
+       DLOG(WARNING) << "lidar measurement drop ";
     }
     return drop;
   }
@@ -749,11 +749,13 @@ bool ThreadedSlam::processFrame() {
       kinematics::Transformation T_WS_live = estimator_.pose(StateId(multiFrame->id()));
       if(parameters_.lidar) {
         if(previousSubmap_){
-          TimerSwitchable tLiveUndistortion("8.1 Live undistortion");
+
           LidarMotionUndistortion motionUndistortion(lastOptimisedState_, T_WS_live, T_SD_,
                                                     lidarMeasurementDeque_, imuMeasurementDeque_);
+
+          TimerSwitchable tLiveUndistortion("8.1 Live undistortion");
           motionUndistortion.deskew();
-          tLiveUndistortion.stop();
+          tLiveUndistortion.stop();          
 
           //ToDo: Two-State downsampling!! (or think about it more carefully) => otherwise determining observed points quite slow
           TimerSwitchable tFilterObserved("8.2 Filter observed points");
@@ -765,17 +767,16 @@ bool ThreadedSlam::processFrame() {
               noOverlapCounter_ = 0;
           }
           tFilterObserved.stop();
+
           TimerSwitchable tDownsampling("8.3 Downsampling");
           motionUndistortion.downsample(submapConfig_.numSubmapFactors, submapConfig_.voxelGridResolution);
           tDownsampling.stop();
-
+          
           if(alignmentPublishCallback_){
             alignmentPublishCallback_(multiFrame->timestamp(), T_WS_live, motionUndistortion.deskewedDownsampledPointCloud(), false);
           } 
-
           // Also add LiDAR Factors (live factors only)
-          std::vector<float> sensorErrors(motionUndistortion.deskewedDownsampledPointCloud().size());
-          std::fill(sensorErrors.begin(), sensorErrors.end(), submapConfig_.sensorError);
+          std::vector<float> sensorErrors(motionUndistortion.deskewedDownsampledPointCloud().size(), submapConfig_.sensorError);
           estimator_.addSubmapAlignmentConstraints(
                   previousSubmap_, previousSubmapId_, multiFrame->id(),
                   motionUndistortion.deskewedDownsampledPointCloud(), sensorErrors, true, "Tukey");
