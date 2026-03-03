@@ -399,10 +399,12 @@ void Publisher::publishEstimatorUpdate(
 
 void Publisher::setupImageTopics(const okvis::cameras::NCameraSystem & nCameraSystem) {
   pubImages_.clear();
+  bool rgb_found = false;
   for(size_t i=0; i< nCameraSystem.numCameras(); ++i) {
     std::string name;
     if(nCameraSystem.cameraType(i).isColour) {
       name = "rgb"+std::to_string(i);
+      rgb_found = true;
     } else {
       name = "cam"+std::to_string(i);
     }
@@ -410,6 +412,7 @@ void Publisher::setupImageTopics(const okvis::cameras::NCameraSystem & nCameraSy
   }
   std::string name = "Top Debug View";
   pubImages_[name] = threadedImagePublisher_->registerPublisher<sensor_msgs::msg::Image>("top_debug_view");
+  skip_uncolored_ = rgb_found;
 #ifdef OKVIS_COLIDMAP
   name = "language_rgb";
   pubImages_[name] = threadedImagePublisher_->registerPublisher<sensor_msgs::msg::Image>("language_rgb");
@@ -494,8 +497,10 @@ void Publisher::publishSubmapsAsCallback(std::unordered_map<uint64_t, okvis::kin
     size_t valMeshCnt = 0;
 
     #ifdef OKVIS_COLIDMAP
-    meshMarker.colors.clear();
-    meshMarker.colors.resize(n * mesh.size());
+    if(skip_uncolored_){
+      meshMarker.colors.clear();
+      meshMarker.colors.resize(n * mesh.size());
+    }
     if( publishMode_ == "Colors" ) {
       for (size_t i = 0; i < mesh.size(); i++) {
         const Eigen::Vector3f v0_W = (T_OM * (mesh[i].vertexes[0].homogeneous())).template head<3>();
@@ -511,6 +516,9 @@ void Publisher::publishSubmapsAsCallback(std::unordered_map<uint64_t, okvis::kin
         tf::pointEigenToMsg(v1_W.template cast<double>(), meshMarker.points[n * valMeshCnt + 1]);
         tf::pointEigenToMsg(v2_W.template cast<double>(), meshMarker.points[n * valMeshCnt + 2]);
         if constexpr(okvis::SupereightMapType::SurfaceMesh::value_type::col_ == se::Colour::On) { // Check for valid colours
+          if(!skip_uncolored_){
+            goto skip_color;
+          }
           if(!mesh[i].colour.vertexes) {
             continue;
           }
@@ -522,11 +530,14 @@ void Publisher::publishSubmapsAsCallback(std::unordered_map<uint64_t, okvis::kin
             msg_colour.b = float(mesh_colour.b) / UINT8_MAX;
             msg_colour.a = 1.0;
           }
+          skip_color:;
         }
         valMeshCnt ++;
       }
-      meshMarker.points.resize(n * valMeshCnt);
-      meshMarker.colors.resize(n * valMeshCnt);
+      if(skip_uncolored_) {
+        meshMarker.points.resize(n * valMeshCnt);
+        meshMarker.colors.resize(n * valMeshCnt);
+      }
       submapMeshLookup_rgb_[it.first] = meshMarker;
     }
     else if ( containsObjects && publishMode_ == "Activations" ) {

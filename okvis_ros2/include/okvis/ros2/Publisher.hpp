@@ -263,6 +263,7 @@ class Publisher
   std::unordered_map<uint64_t, visualization_msgs::msg::Marker> submapMeshLookup_rgb_; ///< Lookup for submap RGB meshes.
   std::map<uint64_t, const okvis::AlignedMap<se::id_t, SubmapObject>*> submapObjects_; ///< Objects in submaps.
   std::map<uint64_t, Eigen::Matrix4f> submapPoses_; ///< Poses of submaps.
+  std::atomic_bool skip_uncolored_ = true; ///< Flag if uncolored vertices should be skipped at mesh publishing
 
   // Vision-Language Query Related Members
   Descriptor text_embedding_vector_; ///< Text embedding vector.
