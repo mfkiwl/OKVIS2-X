@@ -192,6 +192,19 @@ namespace okvis{
         int64_t height = sam_masks.shape[1];
         int64_t width = sam_masks.shape[2];
 
+        cv::Mat unique_segments(invalid_depth_mask.rows, invalid_depth_mask.cols, CV_16UC1, cv::Scalar(se::g_no_id));
+        cv::Mat assignable_pixels(invalid_depth_mask.rows, invalid_depth_mask.cols, CV_8UC1, cv::Scalar(1));
+
+        if(raycasted_segment_masks.size() == 0) {
+            return unique_segments;
+        }
+        
+        bool resize_sam = false;
+        if(invalid_depth_mask.rows != height || invalid_depth_mask.cols != width) {
+            resize_sam = true;
+        }
+        
+
         // Compute Ratio between SAM dimensions and clip dimensions
         // int64_t clip_height = clip_features.shape[0];
         // int64_t clip_width = clip_features.shape[1];
@@ -205,14 +218,14 @@ namespace okvis{
         auto it = raycasted_segment_masks.find(se::g_not_mapped);
         cv::Mat unmapped_mask;
         if(it == raycasted_segment_masks.end()) {
-            unmapped_mask = cv::Mat::zeros(height, width, CV_8UC1);
+            unmapped_mask = cv::Mat::zeros(invalid_depth_mask.rows, invalid_depth_mask.cols, CV_8UC1);
         }
         else {
             unmapped_mask = it->second;
             raycasted_segment_masks.erase(it);
         }
 
-        const int num_min_pixels_sam_segment = int(percentage_allocatable_pixels_sam_segment * height * width);
+        const int num_min_pixels_sam_segment = int(percentage_allocatable_pixels_sam_segment * invalid_depth_mask.cols * invalid_depth_mask.rows);
 
         // (1) SAM masks
         std::vector<SegmentMetadata> sam_mask_sizes; // (mask, size)
@@ -224,6 +237,12 @@ namespace okvis{
             const int num_pixels_per_mask_orig = cv::countNonZero(segment_mask);
             segment_mask.convertTo(segment_mask, CV_8UC1);
             // Mask out invalid depth
+
+            if(resize_sam) {
+                //We need to have the SAM masks and the SE2 masks having the same size for the IoU checks
+                cv::resize(segment_mask, segment_mask, cv::Size(invalid_depth_mask.cols, invalid_depth_mask.rows));
+            }
+
             segment_mask.setTo(cv::Scalar(0), invalid_depth_mask);
 
             // Reject too small segments or segments that are in the border of the near and far plane of integration
@@ -256,9 +275,6 @@ namespace okvis{
 
         const float alfa = 1.2;
         const float oversegmentation_threshold = 0.8;
-
-        cv::Mat unique_segments(height, width, CV_16UC1, cv::Scalar(se::g_no_id));
-        cv::Mat assignable_pixels(height, width, CV_8UC1, cv::Scalar(1));
 
         //NOTE: Simon Boche, the update will be done in a separate function, this helps to unit test this function
         TimerSwitchable allSegmentTimer("All SAM segment tracking");
